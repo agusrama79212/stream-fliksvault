@@ -32,6 +32,9 @@ export default function AdminDashboardPage() {
   const [isLoading, setIsLoading] = useState(false);
   const PAGE_SIZE = 50;
 
+  // Global stats for cards
+  const [globalStats, setGlobalStats] = useState({ total: 0, film: 0, series: 0 });
+
   // Progress states for injection
   const [injectProgress, setInjectProgress] = useState(0);
   const [showProgressModal, setShowProgressModal] = useState(false);
@@ -46,10 +49,25 @@ export default function AdminDashboardPage() {
         router.replace("/admin");
       } else {
         setAuthChecked(true);
+        fetchGlobalStats();
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const fetchGlobalStats = async () => {
+    const [{ count: total }, { count: film }, { count: series }] = await Promise.all([
+      supabase.from("contents").select("*", { count: "exact", head: true }),
+      supabase.from("contents").select("*", { count: "exact", head: true }).eq("type", "film"),
+      supabase.from("contents").select("*", { count: "exact", head: true }).eq("type", "series"),
+    ]);
+    
+    setGlobalStats({
+      total: total || 0,
+      film: film || 0,
+      series: series || 0
+    });
+  };
 
   // Effect terpisah untuk trigger fetch data (mendukung debounce pencarian)
   useEffect(() => {
@@ -340,9 +358,9 @@ export default function AdminDashboardPage() {
           }}
         >
           {[
-            { label: "Total Konten", value: contents.length, icon: "🎬" },
-            { label: "Film", value: contents.filter((c) => c.type === "film").length, icon: "🎥" },
-            { label: "Series/Anime", value: contents.filter((c) => c.type === "series").length, icon: "📺" },
+            { label: "Total Konten", value: globalStats.total, icon: "🎬" },
+            { label: "Film", value: globalStats.film, icon: "🎥" },
+            { label: "Series/Anime", value: globalStats.series, icon: "📺" },
           ].map((stat) => (
             <div
               key={stat.label}
