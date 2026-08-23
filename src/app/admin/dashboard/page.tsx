@@ -26,6 +26,12 @@ export default function AdminDashboardPage() {
   const [authChecked, setAuthChecked] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
 
+  // Pagination states
+  const [page, setPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const [isLoading, setIsLoading] = useState(false);
+  const PAGE_SIZE = 50;
+
   // Progress states for injection
   const [injectProgress, setInjectProgress] = useState(0);
   const [showProgressModal, setShowProgressModal] = useState(false);
@@ -40,11 +46,19 @@ export default function AdminDashboardPage() {
         router.replace("/admin");
       } else {
         setAuthChecked(true);
-        loadContents();
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Effect terpisah untuk trigger fetch data (mendukung debounce pencarian)
+  useEffect(() => {
+    if (!authChecked) return;
+    const timer = setTimeout(() => {
+      loadContents(page, searchQuery);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [authChecked, page, searchQuery]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -52,15 +66,32 @@ export default function AdminDashboardPage() {
     router.refresh();
   };
 
-  const loadContents = async () => {
-    const { data } = await supabase
+  const loadContents = async (currentPage = page, query = searchQuery) => {
+    setIsLoading(true);
+    let queryBuilder = supabase
       .from("contents")
-      .select("*, episodes(id)")
-      .order("created_at", { ascending: false });
+      .select("*, episodes(id)", { count: "exact" });
+
+    // Server-side search support
+    if (query.trim()) {
+      const safeQuery = query.trim().replace(/[^a-zA-Z0-9]/g, '');
+      const searchPattern = safeQuery.split('').join('[-\\s:]?');
+      queryBuilder = queryBuilder.filter("title", "imatch", searchPattern);
+    }
+
+    const from = (currentPage - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const { data, count, error } = await queryBuilder
+      .order("created_at", { ascending: false })
+      .range(from, to);
+
     if (data) {
       setContents(data as any);
+      if (count !== null) setTotalCount(count);
       setSelectedIds([]);
     }
+    setIsLoading(false);
   };
 
   // loadContents dipanggil setelah authChecked — tidak perlu useEffect terpisah
@@ -154,18 +185,8 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const filteredContents = (() => {
-    if (!searchQuery.trim()) return contents;
-    const safeQuery = searchQuery.trim().replace(/[^a-zA-Z0-9]/g, '');
-    if (safeQuery.length < 1) return contents;
-    const searchPattern = safeQuery.split('').join('[-\\s:]?');
-    try {
-      const regex = new RegExp(searchPattern, 'i');
-      return contents.filter(c => regex.test(c.title));
-    } catch (e) {
-      return contents;
-    }
-  })();
+  // Hapus filter client-side karena pencarian sudah dipindah ke server-side
+  const filteredContents = contents;
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -342,9 +363,12 @@ export default function AdminDashboardPage() {
         <div style={{ flex: 1, minWidth: "250px", maxWidth: "100%", padding: "1rem 0" }}>
           <input
             type="text"
-            placeholder="🔍 Cari judul film"
+            placeholder="🔍 Cari judul film (otomatis mencari ke database)..."
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1); // Reset ke halaman pertama saat mencari
+            }}
             style={{
               width: "100%",
               padding: "8px 12px",
@@ -359,7 +383,12 @@ export default function AdminDashboardPage() {
 
         {/* Table */}
         <div className="table-wrapper">
-          <table className="data-table">
+          {isLoading && (
+            <div style={{ padding: "1rem", textAlign: "center", color: "var(--text-secondary)" }}>
+              Memuat data...
+            </div>
+          )}
+          <table className="data-table" style={{ opacity: isLoading ? 0.5 : 1, transition: "opacity 0.2s" }}>
             <thead>
               <tr>
                 <th style={{ width: "40px", textAlign: "center" }}>
@@ -456,6 +485,43 @@ export default function AdminDashboardPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination UI */}
+        {totalCount > PAGE_SIZE && (
+          <div style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: "1.5rem",
+            padding: "1rem",
+            background: "var(--bg-surface)",
+            borderRadius: "var(--radius-md)",
+            border: "1px solid var(--border)"
+          }}>
+            <div style={{ fontSize: "0.9rem", color: "var(--text-secondary)" }}>
+              Menampilkan {((page - 1) * PAGE_SIZE) + 1} - {Math.min(page * PAGE_SIZE, totalCount)} dari {totalCount} konten
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button 
+                className="btn btn-ghost btn-sm" 
+                disabled={page === 1 || isLoading}
+                onClick={() => setPage(page - 1)}
+              >
+                ← Sebelumnya
+              </button>
+              <div style={{ padding: "0.4rem 1rem", background: "var(--bg-card)", borderRadius: "var(--radius-sm)", fontWeight: 600 }}>
+                Halaman {page} dari {Math.ceil(totalCount / PAGE_SIZE)}
+              </div>
+              <button 
+                className="btn btn-ghost btn-sm" 
+                disabled={page >= Math.ceil(totalCount / PAGE_SIZE) || isLoading}
+                onClick={() => setPage(page + 1)}
+              >
+                Selanjutnya →
+              </button>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Share Modal */}
